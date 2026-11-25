@@ -11,6 +11,8 @@
 | 同名同内容 | sha256 一致 | already_applied 幂等跳过 |
 | 权限不足 | os.access(R_OK)=False | inventory 记 readable=false + perm_mode；skip 并记录 |
 | 权限不足（写） | apply 复制抛 OSError | 单文件 failed，进 unresolved，不中断其余文件 |
+| 管理材料（别名/版本说明/元数据表） | admin_notes.py 按文件名模式识别 | 解析应用后原件归档 _archive/admin/，不入库；无法解析的行写入 admin.json.unparsed 由 Agent 人工裁决 |
+| 中文提问查英文文献 | 检索得分过低 | kb_search 中英同义双向扩展（钙钛矿↔perovskite 等）；仍低于阈值则如实 no_evidence |
 | 巨大批次 | 脚本 O(n) 哈希与扫描 | 秒级完成；模型不逐文件介入 |
 | 断点续跑 | operations.jsonl 追加式 | 重跑自动 already_applied；失败文件重试 |
 | 回滚 | bash audit/rollback.sh [OUTPUT_DIR] | 删除历次运行落盘的全部文件并清理空目录；审计日志与清单保留 |

@@ -179,6 +179,79 @@ def main():
         inv = json.load(f)
     with open(os.path.join(wd, "refs.json"), "r", encoding="utf-8") as f:
         refs = json.load(f)
+    admin = {}
+    admin_path = os.path.join(wd, "admin.json")
+    if os.path.exists(admin_path):
+        with open(admin_path, "r", encoding="utf-8") as f:
+            admin = json.load(f)
+
+    def field(value, source, confidence, evidence=""):
+        return {"value": value, "source": source, "confidence": confidence,
+                "evidence": str(evidence)[:160]}
+
+    # 0a) 管理元数据表合并：仅填充缺失字段，不覆盖原文直证
+    meta_table = admin.get("metadata_table") or {}
+    meta_applied = []
+    if meta_table:
+        for rec in inv["records"]:
+            rel = rec["rel_path"]
+            ref = refs.get(rel)
+            if not ref:
+                continue
+            base = os.path.basename(rel).lower()
+            stem = os.path.splitext(base)[0]
+            doi = (ref["doi"]["value"] or "").lower()
+            nt = (ref.get("normalized_title") or "")
+            row = (meta_table.get(base) or meta_table.get(stem)
+                   or (meta_table.get(doi) if doi else None)
+                   or (meta_table.get(nt) if nt else None))
+            if not row:
+                continue
+            filled = []
+            if not ref["title"]["value"] and row.get("title"):
+                ref["title"] = field(row["title"], "admin_metadata", "high", "管理元数据表")
+                ref["normalized_title"] = re.sub(r"[^a-z0-9\u4e00-\u9fff]+", "",
+                                                 str(row["title"]).lower())
+                filled.append("title")
+            raw_auth = row.get("author") or row.get("authors")
+            if not ref["authors"]["value"] and raw_auth:
+                authors = [a.strip() for a in re.split(r"\s*(?:;|；|\band\b)\s*", str(raw_auth)) if a.strip()]
+                if authors:
+                    ref["authors"] = field(authors, "admin_metadata", "high", "管理元数据表")
+                    ref["first_author_surname"] = None
+                    a0 = authors[0]
+                    ref["first_author_surname"] = (a0.split(",", 1)[0].strip()
+                                                   if "," in a0 else a0.split()[-1])
+                    filled.append("authors")
+            if not ref["year"]["value"] and row.get("year"):
+                y = re.search(r"\d{4}", str(row["year"]))
+                if y:
+                    ref["year"] = field(int(y.group(0)), "admin_metadata", "high", "管理元数据表")
+                    filled.append("year")
+            if not ref["venue"]["value"] and (row.get("journal") or row.get("venue")):
+                ref["venue"] = field(row.get("journal") or row.get("venue"),
+                                     "admin_metadata", "high", "管理元数据表")
+                filled.append("venue")
+            if not ref["doi"]["value"] and row.get("doi"):
+                ref["doi"] = field(str(row["doi"]).lower(), "admin_metadata", "high", "管理元数据表")
+                filled.append("doi")
+            if filled:
+                meta_applied.append({"rel_path": rel, "filled": filled})
+
+    # 0b) 别名映射：文件名/题名别名 → 规范名（用于版本分组键与报告）
+    alias_map = admin.get("aliases") or {}
+    alias_applied = []
+    if alias_map:
+        for rec in inv["records"]:
+            rel = rec["rel_path"]
+            base = os.path.basename(rel)
+            stem = os.path.splitext(base)[0]
+            canon = alias_map.get(base) or alias_map.get(stem) or alias_map.get(rel)
+            ref = refs.get(rel)
+            if canon and ref:
+                alias_applied.append({"rel_path": rel, "alias_of": canon})
+                # 别名单独成键，确保同一工作的不同名文件进入同一版本组
+                ref["alias_canonical"] = canon
 
     SIDECAR_EXT = ("bib", "ris", "enw")
 
@@ -240,6 +313,8 @@ def main():
         fa = ref.get("first_author_surname")
         if nt and len(nt) >= 12 and fa:
             keys.add(f"ta:{fa.lower()}:{nt[:60]}")
+        if ref.get("alias_canonical"):
+            keys.add("alias:" + re.sub(r"\s+", "", str(ref["alias_canonical"]).lower()))
         member_keys[rel] = keys
         ks = sorted(keys)
         for k in ks[1:]:
@@ -276,7 +351,59 @@ def main():
         canon, rest = members_sorted[0], members_sorted[1:]
         version_decisions[key] = {"canonical": canon, "archived": rest}
 
+    # 2b) 管理性版本说明覆盖：authoritative / superseded_by 指令优先于启发式 canonical 选择
+    directive_applied = []
+    all_rels = [r["rel_path"] for r in inv["records"]]
+
+    def match_rel(name):
+        name = str(name).strip().lower()
+        if not name:
+            return None
+        for rel in all_rels:
+            if rel.lower() == name or os.path.basename(rel).lower() == name:
+                return rel
+        for rel in all_rels:
+            if name in os.path.basename(rel).lower():
+                return rel
+        return None
+
+    for d in admin.get("version_directives") or []:
+        if d["type"] == "authoritative":
+            target = match_rel(d.get("file"))
+            if not target:
+                continue
+            for key, vd in version_decisions.items():
+                members = [vd["canonical"]] + vd["archived"]
+                if target in members and vd["canonical"] != target:
+                    vd["archived"] = [m for m in members if m != target]
+                    vd["canonical"] = target
+                    vd["admin_override"] = d["raw"]
+                    directive_applied.append(d)
+        elif d["type"] == "superseded_by":
+            old = match_rel(d.get("old"))
+            new = match_rel(d.get("new"))
+            if not old or not new or old == new:
+                continue
+            placed = False
+            for key, vd in version_decisions.items():
+                members = [vd["canonical"]] + vd["archived"]
+                if old in members or new in members:
+                    if new in members:
+                        vd["canonical"] = new
+                        vd["archived"] = [m for m in members if m != new]
+                    else:
+                        vd["archived"] = [m for m in members if m != old] + []
+                    vd["admin_override"] = d["raw"]
+                    directive_applied.append(d)
+                    placed = True
+                    break
+            if not placed:
+                version_decisions[f"admin:{d['raw'][:40]}"] = {
+                    "canonical": new, "archived": [old], "admin_override": d["raw"]}
+                directive_applied.append(d)
+
     # 3) 逐文件生成动作
+    admin_file_set = set(admin.get("admin_files") or [])
     used_names = set()
     items, conflicts = [], []
     for rec in inv["records"]:
@@ -289,6 +416,13 @@ def main():
             "new_name": None, "version_group": None, "version_role": None,
             "reason": None,
         }
+        if rel in admin_file_set:
+            item["action"] = "admin_record"
+            item["doc_type"] = "admin_record"
+            item["target"] = os.path.join("_archive", "admin", os.path.basename(rel))
+            item["reason"] = "管理性材料（别名/版本说明/元数据表）：内容已解析并应用，原件归档不入库"
+            items.append(item)
+            continue
         if rec["error"]:
             item["action"] = "skip"
             item["reason"] = f"输入异常，跳过并如实记录: {rec['error']}"
@@ -343,6 +477,12 @@ def main():
     plan = {
         "case_id": inv.get("case_id"),
         "config": cfg,
+        "admin_integration": {
+            "metadata_rows_applied": meta_applied,
+            "aliases_applied": alias_applied,
+            "directives_applied": directive_applied,
+            "unparsed_admin_lines": admin.get("unparsed", []),
+        },
         "version_groups": [{"key": k, **v} for k, v in version_decisions.items()],
         "exact_duplicates": exact_dup_groups_kept,
         "items": items,

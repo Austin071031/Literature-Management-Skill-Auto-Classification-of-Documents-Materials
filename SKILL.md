@@ -1,6 +1,6 @@
 ---
 name: research-library-curator
-description: 科研文献与资料自动分类整理（可回滚批量整理专精版）。当任务给出一批混杂的科研文件（期刊论文 PDF、预印本、会议论文、学位论文、补充材料、数据集、扫描件）并要求分类归档、补元数据、统一命名、识别重复下载与预印本/正式版版本关系、批量整理并交付清单时使用，例如"整理 input 下的文献""把资料库分类归档并改名""识别重复和版本"。本 Skill 真实改动目录（复制而非剪切，源目录只读），提取元数据只依据原文与侧车文件、缺失字段如实标注不补造，全部操作写入审计日志并生成一键回滚脚本，输出 /app/output 下的 result.json（含 case.json output_contract 全部字段 + case_id）、library/ 整理后目录、manifest、audit 日志与 README 摘要。仅适用于"已有文件批次的整理与归档"；不适用于文献检索发现、单篇精读、全文翻译或写作润色（此时应说明并退出）。
+description: 科研文献与资料自动分类整理（可回滚整理＋可检索问答）。当任务给出混杂科研文件（论文 PDF/预印本/会议/学位论文/补充材料/数据集/扫描件）及随附管理记录（别名表/版本说明/元数据表），要求分类归档、补元数据、统一命名、识别重复与版本关系、建索引并带引用回答问题时使用。真实改动目录（复制非剪切，源目录只读）；元数据仅依据原文/侧车/管理记录，缺失如实标注不补造；别名与版本指令优先于启发式；全程审计日志＋一键回滚；索引按页切块，问答逐条附文件/页码证据，无依据如实回答。输出 /app/output/result.json（含 output_contract 全字段＋case_id）、library/、manifest、index/、answers.json。仅适用已有文件批次的整理与检索；不适用文献检索发现、精读翻译、写作润色。
 ---
 
 # 科研文献与资料自动分类整理 Skill
@@ -26,28 +26,37 @@ description: 科研文献与资料自动分类整理（可回滚批量整理专�
 6. **可复核**：每条分类与去重决策附规则编号与证据（manifest 的 reason / *_source 列）。
 
 ## 输入与输出
-- 输入：`/input/case.json`（case_id、output_contract、约束）、`/input/task.md`（整理规则）、
-  `/input` 下的材料文件（可能含子目录）。
+- 输入：`/input/case.json`（case_id、output_contract、约束、可选 questions/searches 字段）、
+  `/input/task.md`（整理规则、可选问句）、`/input` 下的材料文件（可能含子目录），
+  以及随附的**管理性材料**（别名表/版本说明/元数据表，如 aliases.txt、version_notes.md、metadata.csv）。
 - 输出（`/app/output/`）：
   - `result.json` — case_id + output_contract 全字段 + status/sources/uncertainty/change_log/exceptions
   - `library/` — 整理后的资料库（默认 `library/<文献类型>/<年份>/`）
   - `_archive/duplicates/`、`_archive/versions/` — 重复件与被取代版本（保留不删）
+  - `_archive/admin/` — 管理性材料原件（内容已解析应用，不入库）
   - `manifest.csv` / `manifest.json` — 每份输入文件：原路径、sha256、动作、新路径、
     元数据及字段来源（source/confidence）、标签、归属依据
+  - `index/` — 可检索索引（chunks.jsonl 按页切块 + inverted.json 倒排 + stats.json）
+  - `answers.json` — 案例检索/问答请求的答案（每条附 文件/页码/块号 证据；无依据如实标注）
   - `audit/operations.jsonl` — 全量操作审计日志（追加式，跨多次运行）
   - `audit/rollback.sh` — 一键回滚全部落盘操作
   - `README.md` — 人类可读摘要（目录树、统计、未解决项、冲突）
-- 中间产物（`/app/work/`）：brief.json、inventory.json/.csv、refs.json、plan.json、
-  apply_report.json、selfcheck.json、run_log.md — 全部保留供复核。
+- 中间产物（`/app/work/`）：brief.json、admin.json、inventory.json/.csv、refs.json、
+  plan.json、apply_report.json、questions.json、search_results.json、selfcheck.json、
+  run_log.md — 全部保留供复核。
 
 ## 资源清单（安装后为 /skills/weekly-skill）
 | 路径 | 作用 |
 |-|-|
 | `scripts/inspect_case.py` | 预检：读 case.json/task.md，提取 case_id、output_contract、约束提示与材料清单 → brief.json |
+| `scripts/admin_notes.py` | 管理材料：解析别名表/版本说明/元数据表 → admin.json（无法解析的行留给 Agent 裁决） |
 | `scripts/inventory.py` | 盘点：sha256/md5、魔数类型嗅探、权限、PDF 页数/加密/文本层检测 → inventory.json/.csv |
 | `scripts/extract_refs.py` | 元数据：DOI/arXiv/标题/作者/年份/期刊/关键词提取（侧车优先，逐字段带 source/confidence）→ refs.json |
-| `scripts/plan.py` | 计划：类型判定（T0–T11 规则）、版本并查集分组、精确去重、受控标签、命名降级链、目录归属 → plan.json |
+| `scripts/plan.py` | 计划：管理指令合并（元数据表补缺/别名分组/版本指令覆盖）、类型判定（T0–T11）、版本并查集分组、精确去重、受控标签、命名降级链 → plan.json |
 | `scripts/apply.py` | 执行：复制落盘、幂等跳过、冲突改名不覆盖、追加审计日志、生成全历史回滚脚本 → apply_report.json |
+| `scripts/kb_index.py` | 索引：library 内文件按页提取、切块、倒排索引（含文件/页码/块号坐标）→ index/ |
+| `scripts/kb_search.py` | 检索：BM25 打分＋中英同义扩展＋短语奖励，单查询或批量 |
+| `scripts/answer_questions.py` | 问答：从 case.json/task.md 提取检索/问答请求，带证据回答，无依据如实标注 → answers.json |
 | `scripts/report.py` | 汇总：result.json（契约字段启发自动映射）、manifest、README → /app/output |
 | `scripts/validate_output.py` | 机读自查：契约字段齐全、目标存在且哈希一致、审计完备 → selfcheck.json |
 | `scripts/run_pipeline.sh` | 一键流水线（含失败保底 partial 交付） |
@@ -87,16 +96,22 @@ bash /skills/weekly-skill/scripts/run_pipeline.sh /input /app/work /app/output /
 1. 从 `/app/work/refs.json` 取 2–3 篇 `title.confidence == "low"` 的条目，
    用 `pdftotext -f 1 -l 1 <pdf> - | head -30` 打开原文核对标题与第一作者；
    若提取错误，**直接编辑 `/app/work/refs.json` 修正该字段**（把 source 改为
-   `"manual_verified"`、confidence 改为 `"high"`），然后重跑 plan/apply/report/validate：
+   `"manual_verified"`、confidence 改为 `"high"`），然后重跑 plan/apply/kb_index/answers/report/validate：
    ```bash
    python3 /skills/weekly-skill/scripts/plan.py --work-dir /app/work \
      --config /app/work/plan_config.json 2>/dev/null || python3 /skills/weekly-skill/scripts/plan.py --work-dir /app/work
    python3 /skills/weekly-skill/scripts/apply.py --work-dir /app/work --output-dir /app/output
+   python3 /skills/weekly-skill/scripts/kb_index.py --work-dir /app/work --output-dir /app/output
+   python3 /skills/weekly-skill/scripts/answer_questions.py --work-dir /app/work --output-dir /app/output
    python3 /skills/weekly-skill/scripts/report.py --work-dir /app/work --output-dir /app/output
    python3 /skills/weekly-skill/scripts/validate_output.py --work-dir /app/work --output-dir /app/output
    ```
-2. 核对 plan.json 的 `version_groups`：同组文件确实是同一工作的不同版本
-   （标题+第一作者一致），分组错误同样改 refs.json 后重跑。
+2. 核对 plan.json 的 `version_groups` 与 `admin_integration`：同组文件确实是同一工作的
+   不同版本；管理指令（别名/版本说明/元数据表）应用无误；`unparsed_admin_lines` 非空时
+   **人工阅读该管理文件**，将其指令以同样结构补写进 `/app/work/admin.json` 后重跑。
+3. 若案例含检索/问答请求：打开 `/app/output/answers.json`，逐条审阅——
+   `answered` 条目按 evidence 把 `answer_draft`（证据摘录）**改写为对问题的直接回答**
+   （保留文件/页码引用）；`no_evidence` 条目确认确实无据后保持原样。禁止无证据编造答案。
 
 ### 第 3 步：补齐契约字段
 打开 `/app/output/result.json`：
@@ -119,9 +134,9 @@ bash /skills/weekly-skill/scripts/run_pipeline.sh /input /app/work /app/output /
    回滚命令 `bash /app/output/audit/rollback.sh`，并如实说明 partial 项。
 
 ## 预算纪律（64 次请求 / 900 秒）
-- 分类、命名、去重、归档全部由脚本确定性完成，**不要逐篇阅读 PDF 全文**；
-  模型只用于：识别 task.md 规则（第 0 步）、抽验 2–3 条低置信元数据（第 2 步）、
-  填充契约字段（第 3 步）。
+- 分类、命名、去重、归档、索引、检索全部由脚本确定性完成，**不要逐篇阅读 PDF 全文**；
+  模型只用于：识别 task.md 规则（第 0 步）、抽验 2–3 条低置信元数据与未解析管理行（第 2 步）、
+  审阅改写 answers.json 的答案草稿、填充契约字段（第 3 步）。
 - 第 1 步完成后 result.json 已存在（保底交付），后续步骤是增量改进；
   时间紧张时优先保证第 0、1、4 步完成。
 - 文件量巨大（>500）时脚本仍秒级完成；不要逐文件用模型处理。

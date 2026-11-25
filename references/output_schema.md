@@ -12,7 +12,13 @@
 │   └── <doc_type>/<year>/<规范文件名>
 ├── _archive/
 │   ├── duplicates/        # 精确重复件（保留不删）
-│   └── versions/<组键>/   # 被取代版本（预印本、旧版）
+│   ├── versions/<组键>/   # 被取代版本（预印本、旧版）
+│   └── admin/             # 管理性材料原件（别名表/版本说明/元数据表）
+├── index/                 # 可检索索引
+│   ├── chunks.jsonl       # 块级索引：{chunk_id, file, page, chunk, text}
+│   ├── inverted.json      # 倒排索引 + 文档长度
+│   └── stats.json
+├── answers.json           # 案例检索/问答：status、confidence、evidence（文件/页码/块号）
 └── audit/
     ├── operations.jsonl   # 全量操作审计日志（追加式，跨多次运行）
     └── rollback.sh        # 一键回滚：bash audit/rollback.sh [OUTPUT_DIR]
@@ -29,6 +35,8 @@
 | inputs | 输入目录、材料计数、清单指针 |
 | outputs | library 根目录、manifest、审计日志、回滚脚本路径 |
 | statistics | placed/archived/already_applied/conflict_renamed/skipped/failed 计数 |
+| knowledge_base | 索引统计、问答计数（answered/no_evidence）、answers.json 指针 |
+| admin_integration | 管理材料整合记录：元数据补缺、别名应用、版本指令应用、未解析行 |
 | elements | **六类要素**：file_types、metadata_fields（覆盖率+缺失策略）、directory_levels、duplicates、version_relations、permissions_and_sources |
 | sources | 字段证据位置说明（manifest 的 *_source 列、refs.json） |
 | uncertainty | 不确定点清单（低置信提取、扫描件、加密件等） |

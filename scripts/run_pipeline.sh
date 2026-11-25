@@ -30,6 +30,7 @@ step() {
 
 FAILED=""
 step inspect_case python3 "$SKILL_DIR/scripts/inspect_case.py" --input-dir "$INPUT_DIR" --work-dir "$WORK_DIR" || FAILED="inspect"
+step admin_notes  python3 "$SKILL_DIR/scripts/admin_notes.py"  --work-dir "$WORK_DIR" || true
 step inventory    python3 "$SKILL_DIR/scripts/inventory.py"    --work-dir "$WORK_DIR" || FAILED="inventory"
 step extract_refs python3 "$SKILL_DIR/scripts/extract_refs.py" --work-dir "$WORK_DIR" || FAILED="extract"
 if [ -n "$PLAN_CONFIG" ] && [ -f "$PLAN_CONFIG" ]; then
@@ -38,6 +39,12 @@ else
   step plan       python3 "$SKILL_DIR/scripts/plan.py"         --work-dir "$WORK_DIR" || FAILED="plan"
 fi
 step apply        python3 "$SKILL_DIR/scripts/apply.py"        --work-dir "$WORK_DIR" --output-dir "$OUTPUT_DIR" || FAILED="apply"
+
+# 索引与问答（非致命：失败不影响主交付，仅记录）
+if [ -z "$FAILED" ]; then
+  step kb_index   python3 "$SKILL_DIR/scripts/kb_index.py"     --work-dir "$WORK_DIR" --output-dir "$OUTPUT_DIR" || true
+  step answers    python3 "$SKILL_DIR/scripts/answer_questions.py" --work-dir "$WORK_DIR" --output-dir "$OUTPUT_DIR" || true
+fi
 
 if [ -z "$FAILED" ]; then
   step report     python3 "$SKILL_DIR/scripts/report.py"       --work-dir "$WORK_DIR" --output-dir "$OUTPUT_DIR" || true

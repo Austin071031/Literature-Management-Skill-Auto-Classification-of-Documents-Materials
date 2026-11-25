@@ -120,7 +120,16 @@ def main():
 
     # —— output_contract 字段逐一满足；按键名启发自动映射到真实交付物，其余留给 Agent 填充 ——
     contract = brief.get("output_contract") or {}
+    answers = load(outdir, "answers.json", {}) or {}
+    idx_stats = load(outdir, os.path.join("index", "stats.json"), {}) or {}
+
     AUTO_MAP = [
+        (("answer", "question", "问答", "回答"),
+         lambda: "answers.json"),
+        (("search", "检索", "searchable"),
+         lambda: "index/"),
+        (("index", "索引"),
+         lambda: "index/"),
         (("library", "organiz", "director", "目录", "library_root"),
          lambda: plan.get("config", {}).get("library_root", "library")),
         (("manifest", "metadata", "清单", "元数据", "catalog"),
@@ -131,7 +140,7 @@ def main():
          lambda: plan.get("version_groups", [])),
         (("log", "audit", "操作", "日志"),
          lambda: "audit/operations.jsonl"),
-        (("rollback", "回滚", "recover"),
+        (("rollback", "回滚", "recover", "恢复"),
          lambda: "audit/rollback.sh"),
         (("readme", "summary", "摘要", "报告"),
          lambda: "README.md"),
@@ -161,7 +170,7 @@ def main():
     result = {
         "case_id": case_id,
         "skill": "research-library-curator",
-        "skill_version": "1.0.0",
+        "skill_version": "1.1.0",
         "status": status,
         "generated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         "inputs": {
@@ -175,8 +184,18 @@ def main():
             "manifest_json": "manifest.json",
             "audit_operations": "audit/operations.jsonl",
             "rollback_script": "audit/rollback.sh",
+            "search_index": "index/",
+            "answers": "answers.json" if answers else None,
         },
         "statistics": stats,
+        "knowledge_base": {
+            "index_stats": idx_stats or None,
+            "questions": answers.get("questions_total", 0),
+            "answered": answers.get("answered", 0),
+            "no_evidence": answers.get("no_evidence", 0),
+            "answers_file": "answers.json" if answers else None,
+        },
+        "admin_integration": plan.get("admin_integration"),
         "elements": elements,
         "sources": "字段证据见 manifest.json 的 *_source 列与 /app/work/refs.json（source/confidence/evidence）",
         "uncertainty": uncertainty,

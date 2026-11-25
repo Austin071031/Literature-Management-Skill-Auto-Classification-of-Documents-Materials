@@ -1,5 +1,24 @@
 # CHANGELOG
 
+## 1.1.0 (2026-11-25)
+
+针对隐藏案例工单中的"别名、管理性版本说明、元数据、检索/问答、恢复/索引操作"新增：
+
+- **管理性材料整合**（admin_notes.py + plan.py 合并逻辑）：解析别名表
+  （canonical = alias 或 alias -> canonical）、版本说明（superseded by / replaces /
+  authoritative）与元数据表（CSV/JSON）；元数据表仅补缺失字段（source=admin_metadata），
+  别名并入版本分组键，版本指令覆盖启发式 canonical 选择；无法解析的行保留供 Agent 裁决。
+  管理文件原件归档 `_archive/admin/` 不入库。
+- **可检索索引**（kb_index.py）：library 内文件逐页提取、切块（600 字窗口/段落边界）、
+  纯标准库倒排索引，块级坐标（文件/页码/块号）支持回链复核。
+- **带引用的问答**（kb_search.py + answer_questions.py）：BM25 打分、中英领域同义
+  双向扩展（解决中文提问对英文文献的词表鸿沟）、短语奖励；问题来自 case.json 的
+  questions/searches/queries 字段或 task.md 问句；得分低于阈值如实回答"未找到依据"，
+  禁止编造；答案草稿由 Agent 审阅改写为直接回答。
+- result.json 新增 `knowledge_base` 与 `admin_integration` 段；契约字段自动映射
+  扩展 answer/question/search/index/recovery 类键名。
+- frontmatter description 压缩至 913B（≤1024B 上限，规避安装期 evaluation_error）。
+
 ## 1.0.0 (2026-11-19)
 
 - 首版：六脚本流水线（inspect → inventory → extract_refs → plan → apply → report）
